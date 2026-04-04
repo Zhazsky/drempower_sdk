@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from drempower_sdk.msg import MotorCommand
-import time
+import math
 
 class MotorTestNode(Node):
     def __init__(self):
@@ -11,12 +11,12 @@ class MotorTestNode(Node):
         self.cmd_pub = self.create_publisher(MotorCommand, 'motor_commands', 10)
         self.state_sub = self.create_subscription(JointState, 'motor_states', self.state_callback, 10)
         self.timer = self.create_timer(3.0, self.timer_callback)
-        self.target_angle = 30.0
-        self.get_logger().info("Test SDK Node started")
+        self.target_angle = 0.5236 # ~30 degrees in rad
+        self.get_logger().info("Test SDK Node started (Radians mode)")
 
     def state_callback(self, msg):
         for i, name in enumerate(msg.name):
-            self.get_logger().info(f"State: {name} - Angle: {msg.position[i]:.2f}, Speed: {msg.velocity[i]:.2f}, Torque: {msg.effort[i]:.2f}")
+            self.get_logger().info(f"State: {name} - Pos: {msg.position[i]:.3f} rad, Vel: {msg.velocity[i]:.3f} rad/s, Torque: {msg.effort[i]:.3f} Nm")
 
     def timer_callback(self):
         msg = MotorCommand()
@@ -24,10 +24,10 @@ class MotorTestNode(Node):
         msg.motor_ids = [1] # Can add more IDs here if available
         msg.type = 4       # Step Position (Relative)
         msg.mode = 1       # Trapezoidal
-        msg.values = [float(self.target_angle), 50.0, 40.0] # angle, speed, accel
+        msg.values = [float(self.target_angle), 2.0, 5.0] # [angle(rad), speed(rad/s), accel(rad/s^2)]
         
         self.cmd_pub.publish(msg)
-        self.get_logger().info(f"Sent Step command: {self.target_angle} degrees to motors {msg.motor_ids}")
+        self.get_logger().info(f"Sent Step command: {self.target_angle:.3f} rad to motors {msg.motor_ids}")
         self.target_angle = -self.target_angle  # Toggle
 
 def main(args=None):

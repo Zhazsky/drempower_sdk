@@ -2,10 +2,17 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include "drempower_sdk/msg/motor_command.hpp"
 #include "drempower_sdk/drempower_driver.hpp"
+#include <cmath>
 
 using namespace std::chrono_literals;
 
 namespace drempower {
+
+// Conversion constants
+const double DEG_TO_RAD = M_PI / 180.0;
+const double RAD_TO_DEG = 180.0 / M_PI;
+const double RPM_TO_RADS = 2.0 * M_PI / 60.0;
+const double RADS_TO_RPM = 60.0 / (2.0 * M_PI);
 
 class DrempowerNode : public rclcpp::Node {
 public:
@@ -16,17 +23,17 @@ public:
         this->declare_parameter<std::vector<int64_t>>("motor_ids", {1});
         this->declare_parameter<double>("update_rate", 30.0);
 
-        // Initialization parameters
+        // Initialization parameters (Inputs in Radians/Seconds)
         this->declare_parameter<bool>("init_motor_settings", false);
         this->declare_parameter<bool>("set_zero_position_temp", false);
-        this->declare_parameter<double>("min_angle", -180.0);
-        this->declare_parameter<double>("max_angle", 180.0);
+        this->declare_parameter<double>("min_angle", -M_PI); // rad
+        this->declare_parameter<double>("max_angle", M_PI);  // rad
         this->declare_parameter<bool>("set_angle_range", false);
         this->declare_parameter<bool>("set_angle_range_config", false);
-        this->declare_parameter<double>("speed_limit", -1.0);
-        this->declare_parameter<double>("torque_limit", -1.0);
-        this->declare_parameter<double>("speed_adaptive_limit", -1.0);
-        this->declare_parameter<double>("torque_adaptive_limit", -1.0);
+        this->declare_parameter<double>("speed_limit", -1.0); // rad/s
+        this->declare_parameter<double>("torque_limit", -1.0); // Nm
+        this->declare_parameter<double>("speed_adaptive_limit", -1.0); // rad/s
+        this->declare_parameter<double>("torque_adaptive_limit", -1.0); // Nm
         this->declare_parameter<double>("p_gain", -1.0);
         this->declare_parameter<double>("i_gain", -1.0);
         this->declare_parameter<double>("d_gain", -1.0);
@@ -51,7 +58,7 @@ public:
 
         // Apply initialization settings if requested
         if (this->get_parameter("init_motor_settings").as_bool()) {
-            RCLCPP_INFO(this->get_logger(), "Applying initialization motor settings...");
+            RCLCPP_INFO(this->get_logger(), "Applying initialization motor settings (Units: rad, rad/s)...");
             for (auto id_long : motor_ids_) {
                 uint8_t id = static_cast<uint8_t>(id_long);
                 
@@ -59,8 +66,8 @@ public:
                     driver_.setZeroPositionTemp(id);
                 }
                 
-                double min_a = this->get_parameter("min_angle").as_double();
-                double max_a = this->get_parameter("max_angle").as_double();
+                double min_a = this->get_parameter("min_angle").as_double() * RAD_TO_DEG;
+                double max_a = this->get_parameter("max_angle").as_double() * RAD_TO_DEG;
                 if (this->get_parameter("set_angle_range").as_bool()) {
                     driver_.setAngleRange(id, static_cast<float>(min_a), static_cast<float>(max_a));
                 }
@@ -68,14 +75,18 @@ public:
                     driver_.setAngleRangeConfig(id, static_cast<float>(min_a), static_cast<float>(max_a));
                 }
                 
-                double s_limit = this->get_parameter("speed_limit").as_double();
-                if (s_limit > 0) driver_.setSpeedLimit(id, static_cast<float>(s_limit));
+                double s_limit_rads = this->get_parameter("speed_limit").as_double();
+                if (s_limit_rads > 0) {
+                    driver_.setSpeedLimit(id, static_cast<float>(s_limit_rads * RADS_TO_RPM));
+                }
                 
                 double t_limit = this->get_parameter("torque_limit").as_double();
                 if (t_limit > 0) driver_.setTorqueLimit(id, static_cast<float>(t_limit));
                 
-                double sa_limit = this->get_parameter("speed_adaptive_limit").as_double();
-                if (sa_limit > 0) driver_.setSpeedAdaptiveLimit(id, static_cast<float>(sa_limit));
+                double sa_limit_rads = this->get_parameter("speed_adaptive_limit").as_double();
+                if (sa_limit_rads > 0) {
+                    driver_.setSpeedAdaptiveLimit(id, static_cast<float>(sa_limit_rads * RADS_TO_RPM));
+                }
                 
                 double ta_limit = this->get_parameter("torque_adaptive_limit").as_double();
                 if (ta_limit > 0) driver_.setTorqueAdaptiveLimit(id, static_cast<float>(ta_limit));
@@ -106,7 +117,7 @@ public:
         auto period = std::chrono::duration<double>(1.0 / update_rate);
         timer_ = this->create_wall_timer(period, std::bind(&DrempowerNode::timerCallback, this));
 
-        RCLCPP_INFO(this->get_logger(), "Drempower node started on port %s", port.c_str());
+        RCLCPP_INFO(this->get_logger(), "Drempower node started on port %s (Radians mode)", port.c_str());
     }
 
 private:
@@ -128,76 +139,100 @@ private:
 
         switch (msg->type) {
             case 0: { // Absolute Angle Position Control
-                float angle = msg->values.size() > 0 ? msg->values[0] : 0.0f;
-                float speed = msg->values.size() > 1 ? msg->values[1] : 20.0f;
+                float angle_deg = (msg->values.size() > 0 ? msg->values[0] : 0.0f) * RAD_TO_DEG;
+                float speed_rpm = (msg->values.size() > 1 ? msg->values[1] : 2.0f) * RADS_TO_RPM; // Default 2.0 rad/s -> ~19rpm
                 float param = msg->values.size() > 2 ? msg->values[2] : 10.0f;
+                if (msg->mode == 1) {
+                    param *= RADS_TO_RPM; // Accel: rad/s^2 -> RPM/s
+                } else if (msg->mode == 2) {
+                    // param is torque Nm, no conversion needed
+                }
+                // mode 0: param is bandwidth, no conversion needed
+                
                 if (multi) {
-                    for (auto id : ids) driver_.presetAngle(id, angle, speed, param, msg->mode);
-                    success = driver_.syncTrigger(0x08 + msg->mode, 0); // Broadcast trigger
+                    for (auto id : ids) driver_.presetAngle(id, angle_deg, speed_rpm, param, msg->mode);
+                    success = driver_.syncTrigger(0x08 + msg->mode, 0); 
                 } else {
-                    success = driver_.setAngle(ids[0], angle, speed, param, msg->mode);
+                    success = driver_.setAngle(ids[0], angle_deg, speed_rpm, param, msg->mode);
                 }
                 break;
             }
             case 1: { // Speed Control
-                float speed = msg->values.size() > 0 ? msg->values[0] : 0.0f;
-                float param = msg->values.size() > 1 ? msg->values[1] : 10.0f;
+                float speed_rpm = (msg->values.size() > 0 ? msg->values[0] : 0.0f) * RADS_TO_RPM;
+                float param = msg->values.size() > 1 ? msg->values[1] : 1.0f;
+                if (msg->mode != 0) {
+                    param *= RADS_TO_RPM; // Accel rad/s^2 -> RPM/s
+                }
+                // mode 0: param is torque limit Nm, no conversion needed
+                
                 if (multi) {
-                    for (auto id : ids) driver_.presetSpeed(id, speed, param, msg->mode);
-                    success = driver_.syncTrigger(0x0B + msg->mode, 0); // Broadcast trigger
+                    for (auto id : ids) driver_.presetSpeed(id, speed_rpm, param, msg->mode);
+                    success = driver_.syncTrigger(0x0B + msg->mode, 0); 
                 } else {
-                    success = driver_.setSpeed(ids[0], speed, param, msg->mode);
+                    success = driver_.setSpeed(ids[0], speed_rpm, param, msg->mode);
                 }
                 break;
             }
             case 2: { // Torque Control
                 float torque = msg->values.size() > 0 ? msg->values[0] : 0.0f;
-                float param = msg->values.size() > 1 ? msg->values[1] : 10.0f;
+                float param = msg->values.size() > 1 ? msg->values[1] : 10.0f; // Nm/s
+                // param is torque ramp Nm/s, no conversion needed
                 if (multi) {
                     for (auto id : ids) driver_.presetTorque(id, torque, param, msg->mode);
-                    success = driver_.syncTrigger(0x0E + msg->mode, 0); // Broadcast trigger
+                    success = driver_.syncTrigger(0x0E + msg->mode, 0); 
                 } else {
                     success = driver_.setTorque(ids[0], torque, param, msg->mode);
                 }
                 break;
             }
             case 3: { // Adaptive Angle Control
-                float angle = msg->values.size() > 0 ? msg->values[0] : 0.0f;
-                float speed = msg->values.size() > 1 ? msg->values[1] : 20.0f;
+                float angle_deg = (msg->values.size() > 0 ? msg->values[0] : 0.0f) * RAD_TO_DEG;
+                float speed_rpm = (msg->values.size() > 1 ? msg->values[1] : 2.0f) * RADS_TO_RPM;
                 float torque = msg->values.size() > 2 ? msg->values[2] : 1.0f;
                 for (auto id : ids) {
-                    if (!driver_.setAngleAdaptive(id, angle, speed, torque)) success = false;
+                    if (!driver_.setAngleAdaptive(id, angle_deg, speed_rpm, torque)) success = false;
                 }
                 break;
             }
             case 4: { // Step Angle (Relative) Control
-                float angle = msg->values.size() > 0 ? msg->values[0] : 0.0f;
-                float speed = msg->values.size() > 1 ? msg->values[1] : 20.0f;
+                float angle_deg = (msg->values.size() > 0 ? msg->values[0] : 0.0f) * RAD_TO_DEG;
+                float speed_rpm = (msg->values.size() > 1 ? msg->values[1] : 2.0f) * RADS_TO_RPM;
                 float param = msg->values.size() > 2 ? msg->values[2] : 10.0f;
+                if (msg->mode == 1) {
+                    param *= RADS_TO_RPM; // Accel: rad/s^2 -> RPM/s
+                } else if (msg->mode == 2) {
+                    // param is torque Nm, no conversion needed
+                }
+                // mode 0: param is bandwidth, no conversion needed
+                
                 for (auto id : ids) {
-                    if (!driver_.stepAngle(id, angle, speed, param, msg->mode)) success = false;
+                    if (!driver_.stepAngle(id, angle_deg, speed_rpm, param, msg->mode)) success = false;
                 }
                 break;
             }
             case 5: { // Impedance Control
-                float angle = msg->values.size() > 0 ? msg->values[0] : 0.0f;
-                float speed = msg->values.size() > 1 ? msg->values[1] : 0.0f;
+                float angle_deg = (msg->values.size() > 0 ? msg->values[0] : 0.0f) * RAD_TO_DEG;
+                float speed_rpm = (msg->values.size() > 1 ? msg->values[1] : 0.0f) * RADS_TO_RPM;
                 float tff = msg->values.size() > 2 ? msg->values[2] : 0.0f;
-                float kp = msg->values.size() > 3 ? msg->values[3] : 1.0f;
-                float kd = msg->values.size() > 4 ? msg->values[4] : 0.1f;
+                // input kp: Nm/rad -> target: Nm/deg
+                // kp_deg = kp_rad * (pi / 180)
+                float kp_deg = (msg->values.size() > 3 ? msg->values[3] : 1.0f) * DEG_TO_RAD; 
+                // input kd: Nm/(rad/s) -> target: Nm/(r/min)
+                // kd_rpm = kd_rads * (2*pi / 60)
+                float kd_rpm = (msg->values.size() > 4 ? msg->values[4] : 0.1f) * RPM_TO_RADS;
                 for (auto id : ids) {
-                    if (!driver_.impedanceControl(id, angle, speed, tff, kp, kd, msg->mode)) success = false;
+                    if (!driver_.impedanceControl(id, angle_deg, speed_rpm, tff, kp_deg, kd_rpm, msg->mode)) success = false;
                 }
                 break;
             }
             case 6: { // Motion Aid
-                float angle = msg->values.size() > 0 ? msg->values[0] : 0.0f;
-                float speed = msg->values.size() > 1 ? msg->values[1] : 20.0f;
-                float angle_err = msg->values.size() > 2 ? msg->values[2] : 5.0f;
-                float speed_err = msg->values.size() > 3 ? msg->values[3] : 2.0f;
+                float angle_deg = (msg->values.size() > 0 ? msg->values[0] : 0.0f) * RAD_TO_DEG;
+                float speed_rpm = (msg->values.size() > 1 ? msg->values[1] : 2.0f) * RADS_TO_RPM;
+                float angle_err_deg = (msg->values.size() > 2 ? msg->values[2] : 0.1f) * RAD_TO_DEG;
+                float speed_err_rpm = (msg->values.size() > 3 ? msg->values[3] : 0.2f) * RADS_TO_RPM;
                 float torque = msg->values.size() > 4 ? msg->values[4] : 1.0f;
                 for (auto id : ids) {
-                    if (!driver_.motionAid(id, angle, speed, angle_err, speed_err, torque)) success = false;
+                    if (!driver_.motionAid(id, angle_deg, speed_rpm, angle_err_deg, speed_err_rpm, torque)) success = false;
                 }
                 break;
             }
@@ -218,8 +253,9 @@ private:
             MotorState state;
             if (driver_.getMotorState(static_cast<uint8_t>(id), state)) {
                 joint_state_msg.name.push_back("motor_" + std::to_string(id));
-                joint_state_msg.position.push_back(state.angle);
-                joint_state_msg.velocity.push_back(state.speed);
+                // Convert to Radians and Radians/sec
+                joint_state_msg.position.push_back(state.angle * DEG_TO_RAD);
+                joint_state_msg.velocity.push_back(state.speed * RPM_TO_RADS);
                 joint_state_msg.effort.push_back(state.torque);
             }
         }

@@ -59,8 +59,22 @@ source install/setup.bash
 | `update_rate` | double | `20.0` | 电机状态发布频率 (Hz) |
 | `init_motor_settings`| bool | `false` | **总开关**：启动时是否应用以下配置 |
 | `p_gain` / `i_gain` | double | `-1.0` | 启动时设置 PID 增益 |
-| `speed_limit` | double | `-1.0` | 启动时设置最大转速限制 |
+| `speed_limit` | double | `-1.0` | 启动时设置最大转速限制 (rad/s) |
+| `min_angle` / `max_angle` | double | `-M_PI` / `M_PI` | 启动时设置角度限位 (rad) |
 | `set_angle_range` | bool | `false` | 启动时是否开启角度限位 |
+
+---
+
+## 📏 单位标准 (Units)
+
+本 SDK 遵循 ROS 2 标准 SI 单位制，确保与其他 ROS 节点无缝集成：
+
+-   **角度 (Angle)**: 弧度 (`Radians`)
+-   **角速度 (Velocity)**: 弧度/秒 (`rad/s`)
+-   **角加速度 (Acceleration)**: 弧度/秒² (`rad/s²`)
+-   **力矩 (Effort/Torque)**: 牛顿·米 (`Nm`)
+-   **刚度 (Stiffness - Kp)**: `Nm/rad`
+-   **阻尼 (Damping - Kd)**: `Nm/(rad/s)`
 
 ---
 
@@ -70,11 +84,11 @@ source install/setup.bash
 
 | type | 模式名称 | values 数组定义 | mode 字段说明 |
 | :--- | :--- | :--- | :--- |
-| **0** | **绝对角度** | `[角度(°), 速度, 参数]` | mode 0:轨迹, 1:梯形, 2:前馈 |
-| **1** | **速度控制** | `[速度(r/min), 参数]` | mode 0:直接, !=0:匀加速 |
+| **0** | **绝对角度** | `[角度(rad), 速度, 参数]` | mode 0:轨迹, 1:梯形, 2:前馈 |
+| **1** | **速度控制** | `[速度(rad/s), 参数]` | mode 0:直接, !=0:匀加速 |
 | **2** | **力矩控制** | `[力矩(Nm), 参数]` | mode 0:直接, !=0:匀增量 |
-| **3** | **自适应角度**| `[角度(°), 速度, 力矩]` | 自动适配负载 |
-| **4** | **相对角度** | `[增量(°), 速度, 参数]` | 含义同 type 0 |
+| **3** | **自适应角度**| `[角度(rad), 速度, 力矩]` | 自动适配负载 |
+| **4** | **相对角度** | `[增量(rad), 速度, 参数]` | 含义同 type 0 |
 | **5** | **阻抗控制** | `[角, 速, Tff, Kp, Kd]` | 实现关节柔性控制 |
 | **6** | **运动助力** | `[角, 速, dθ, dω, T]` | 用于人机协作辅助 |
 
@@ -87,10 +101,10 @@ source install/setup.bash
 ros2 launch drempower_sdk drempower_launch.py
 ```
 
-### 2. 命令行控制 (同步控制 ID 1 和 2 到 90°)
+### 2. 命令行控制 (同步控制 ID 1 和 2 到 1.57 rad [90°])
 ```bash
 ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand \
-"{motor_ids: [1, 2], type: 0, mode: 1, values: [90.0, 20.0, 10.0]}"
+"{motor_ids: [1, 2], type: 0, mode: 1, values: [1.57, 2.0, 10.0]}"
 ```
 
 ---
@@ -102,35 +116,35 @@ ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand \
 ### 1. 位置控制 (Position Control)
 - **轨迹跟踪模式** (Trajectory Tracking):
   ```bash
-  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 0, mode: 0, values: [90.0, 20.0, 150.0]}" # values: [角度, 速度, 滤波带宽]
+  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 0, mode: 0, values: [1.57, 2.0, 150.0]}" # values: [角度(rad), 速度(rad/s), 滤波带宽]
   ```
 - **梯形轨迹模式** (Trapezoidal / S-curve):
   ```bash
-  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 0, mode: 1, values: [90.0, 20.0, 10.0]}"  # values: [角度, 目标转速, 加速度]
+  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 0, mode: 1, values: [1.57, 2.0, 10.0]}"  # values: [角度(rad), 目标速度(rad/s), 加速度(rad/s^2)]
   ```
 - **前馈控制模式** (Feedforward):
   ```bash
-  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 0, mode: 2, values: [90.0, 20.0, 0.5]}"   # values: [角度, 前馈转速, 前馈力矩]
+  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 0, mode: 2, values: [1.57, 2.0, 0.5]}"   # values: [角度(rad), 前馈速度(rad/s), 前馈力矩(Nm)]
   ```
 
 ### 2. 速度控制 (Speed Control)
 - **速度前馈模式** (Direct/Feedforward):
   ```bash
-  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 1, mode: 0, values: [30.0, 0.5]}"        # values: [目标转速, 前馈力矩]
+  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 1, mode: 0, values: [3.14, 0.5]}"        # values: [目标速度(rad/s), 前馈力矩(Nm)]
   ```
 - **速度爬升模式** (Ramp/Climb):
   ```bash
-  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 1, mode: 1, values: [30.0, 5.0]}"        # values: [目标转速, 目标加速度]
+  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 1, mode: 1, values: [3.14, 1.0]}"        # values: [目标速度(rad/s), 目标加速度(rad/s^2)]
   ```
 
 ### 3. 力矩控制 (Torque Control)
 - **直接控制模式** (Direct):
   ```bash
-  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 2, mode: 0, values: [1.0, 0.0]}"         # values: [目标力矩, 无效参数]
+  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 2, mode: 0, values: [1.0, 0.0]}"         # values: [目标力矩(Nm), 无效参数]
   ```
 - **力矩爬升模式** (Ramp/Climb):
   ```bash
-  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 2, mode: 1, values: [1.0, 0.2]}"         # values: [目标力矩, 力矩增量Nm/s]
+  ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand "{motor_ids: [1], type: 2, mode: 1, values: [1.0, 0.2]}"         # values: [目标力矩(Nm), 力矩增量Nm/s]
   ```
 
 ---
