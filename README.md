@@ -151,7 +151,7 @@ ros2 topic pub --once /motor_commands drempower_sdk/msg/MotorCommand \
 
 ## 🤝 贡献与反馈
 
-欢迎提交 Issue 或 Pull Request 来完善此 SDK。对于新功能的建议，请参考 [DrEmpower 协议手册](http://www.drempower.com/)。
+欢迎提交 Issue 或 Pull Request 来完善此 SDK。对于新功能的建议，请参考 [DrEmpower 协议手册](https://github.com/DrRobotTech/drempower-wiki)。
 
 ---
 

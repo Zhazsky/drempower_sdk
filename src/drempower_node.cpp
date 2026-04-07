@@ -1,5 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include "drempower_sdk/msg/motor_command.hpp"
 #include "drempower_sdk/drempower_driver.hpp"
 #include <cmath>
@@ -112,6 +113,9 @@ public:
         // Subscriptions
         cmd_sub_ = this->create_subscription<drempower_sdk::msg::MotorCommand>(
             "motor_commands", 10, std::bind(&DrempowerNode::commandCallback, this, std::placeholders::_1));
+
+        set_zero_sub_ = this->create_subscription<std_msgs::msg::Int32>(
+            "set_zero_position", 10, std::bind(&DrempowerNode::setZeroCallback, this, std::placeholders::_1));
 
         // Timer for status updates
         auto period = std::chrono::duration<double>(1.0 / update_rate);
@@ -245,6 +249,21 @@ private:
         }
     }
 
+    void setZeroCallback(const std_msgs::msg::Int32::SharedPtr msg) {
+        uint8_t id = static_cast<uint8_t>(msg->data);
+        RCLCPP_INFO(this->get_logger(), "Setting current position as permanent zero for motor ID %d", id);
+        if (driver_.setZeroPosition(id)) {
+            RCLCPP_INFO(this->get_logger(), "Zero point set successfully, now saving config...");
+            if (driver_.saveConfig(id)) {
+                RCLCPP_INFO(this->get_logger(), "Configuration saved successfully for motor ID %d", id);
+            } else {
+                RCLCPP_ERROR(this->get_logger(), "Failed to save configuration for motor ID %d", id);
+            }
+        } else {
+            RCLCPP_ERROR(this->get_logger(), "Failed to set zero position for motor ID %d", id);
+        }
+    }
+
     void timerCallback() {
         auto joint_state_msg = sensor_msgs::msg::JointState();
         joint_state_msg.header.stamp = this->now();
@@ -269,6 +288,7 @@ private:
     std::vector<int64_t> motor_ids_;
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
     rclcpp::Subscription<drempower_sdk::msg::MotorCommand>::SharedPtr cmd_sub_;
+    rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr set_zero_sub_;
     rclcpp::TimerBase::SharedPtr timer_;
 };
 

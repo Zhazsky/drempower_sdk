@@ -9,7 +9,7 @@ def generate_launch_description():
             executable='drempower_node',
             name='drempower_node',
             parameters=[{
-                'port': '/dev/ttyACM2',
+                'port': '/dev/ttyACM0',
                 'baudrate': 115200,
                 'motor_ids': [1],
                 'update_rate': 20.0,
@@ -22,10 +22,10 @@ def generate_launch_description():
                 # 'max_angle': 90.0,
             }]
         ),
-        Node(
-            package='drempower_sdk',
-            executable='test_sdk_node.py',
-            name='test_sdk_node',
-            output='screen'
-        )
+        # Node(
+        #     package='drempower_sdk',
+        #     executable='test_sdk_node.py',
+        #     name='test_sdk_node',
+        #     output='screen'
+        # )
     ])
