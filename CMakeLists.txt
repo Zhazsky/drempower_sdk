@@ -28,14 +28,26 @@ target_include_directories(drempower_driver PUBLIC
 )
 target_link_libraries(drempower_driver PUBLIC Boost::system)
 
+# Create SocketCAN driver library
+add_library(drempower_sc_driver src/drempower_sc_driver.cpp)
+target_include_directories(drempower_sc_driver PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+
 # Create the node executable
 add_executable(drempower_node src/drempower_node.cpp)
 target_link_libraries(drempower_node drempower_driver)
 ament_target_dependencies(drempower_node rclcpp sensor_msgs std_msgs)
 rosidl_target_interfaces(drempower_node ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
+# Create the SocketCAN node executable
+add_executable(drempower_sc_node src/drempower_sc_node.cpp)
+target_link_libraries(drempower_sc_node drempower_sc_driver)
+ament_target_dependencies(drempower_sc_node rclcpp sensor_msgs std_msgs)
+rosidl_target_interfaces(drempower_sc_node ${PROJECT_NAME} "rosidl_typesupport_cpp")
+
 # Install executables and scripts
-install(TARGETS drempower_node drempower_driver
+install(TARGETS drempower_node drempower_driver drempower_sc_node drempower_sc_driver
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
@@ -54,5 +66,6 @@ endif()
 
 # Important: ensure the driver library and the node can find the generated headers
 add_dependencies(drempower_node ${PROJECT_NAME}__rosidl_typesupport_cpp)
+add_dependencies(drempower_sc_node ${PROJECT_NAME}__rosidl_typesupport_cpp)
 
 ament_package()

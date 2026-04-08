@@ -6,11 +6,16 @@
 
 `drempower_sdk` 是为 **DrEmpower 一体化关节电机** 系列打造的高性能 ROS 2 驱动程序。它通过 C++ 重构了原厂 Python 协议逻辑，为开发者提供了一个低延迟、高可靠性的机器人硬件抽象层。
 
+目前 SDK 提供两种通信底层的驱动实现，您可以根据硬件环境选择最合适的方案：
+1. **串口驱动 (`drempower_node`)**：基于 `boost::asio` 实现的串口通信（适用于 USB-to-CAN 模块透传等场景）。
+2. **SocketCAN 驱动 (`drempower_sc_node`)**：基于 Linux 原生 SocketCAN 接口的通信（适用于具备原生 CAN 总线接口的设备，提供更低延迟和更稳定的底层支持）。
+
 ---
 
 ## 🚀 核心特性
 
--   **高性能通信**：基于 `boost::asio` 实现非阻塞串口通信，相比 Python 版本显著降低指令延迟。
+-   **双底层支持**：同时支持串口透传通信与 Linux 原生 SocketCAN 通信，适应不同的硬件接入需求。
+-   **高性能通信**：相比 Python 版本显著降低指令延迟，C++ 实现确保控制的高实时性。
 -   **全功能支持**：完整覆盖原厂协议的所有控制模式，包括阻抗控制、运动助力、前馈控制等。
 -   **多关节同步**：内置“预设指令 + 广播触发”机制，确保多自由度系统动作的物理同步性。
 -   **灵活初始化**：支持通过 ROS 2 参数在启动时自动配置 PID、限位、波特率等电机属性。
@@ -22,9 +27,9 @@
 
 SDK 采用分层解耦架构，方便二次开发与跨平台移植：
 
-1.  **Hardware Layer**: 串口字节流处理（Boost::Asio）。
-2.  **Driver API Layer**: 纯 C++ 实现的电机控制逻辑，不依赖 ROS 2 环境。
-3.  **ROS 2 Node Layer**: 负责参数映射、消息订阅 (`MotorCommand`) 与状态发布 (`JointState`)。
+1.  **Hardware Layer**: 提供串口字节流处理（Boost::Asio）与原生 SocketCAN 处理（Linux Sockets）两种实现。
+2.  **Driver API Layer**: 纯 C++ 实现的电机控制逻辑，提供统一的方法调用，不依赖 ROS 2 环境。
+3.  **ROS 2 Node Layer**: 负责参数映射、消息订阅 (`MotorCommand`) 与状态发布 (`JointState`)，提供 `drempower_node` 和 `drempower_sc_node` 两个可执行节点。
 
 ---
 
@@ -49,19 +54,20 @@ source install/setup.bash
 
 ## ⚙️ 配置参数
 
-在 Launch 文件中，您可以配置以下核心参数：
+在 Launch 文件中，您可以配置以下核心参数。注意，串口节点和 SocketCAN 节点的参数略有不同：
 
-| 参数名 | 类型 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `port` | string | `/dev/ttyACM0` | 串口设备路径 |
-| `baudrate` | int | `115200` | 串口波特率 |
-| `motor_ids` | int_array | `[1]` | 默认管理的电机 ID 列表 |
-| `update_rate` | double | `20.0` | 电机状态发布频率 (Hz) |
-| `init_motor_settings`| bool | `false` | **总开关**：启动时是否应用以下配置 |
-| `p_gain` / `i_gain` | double | `-1.0` | 启动时设置 PID 增益 |
-| `speed_limit` | double | `-1.0` | 启动时设置最大转速限制 (rad/s) |
-| `min_angle` / `max_angle` | double | `-M_PI` / `M_PI` | 启动时设置角度限位 (rad) |
-| `set_angle_range` | bool | `false` | 启动时是否开启角度限位 |
+| 参数名 | 适用节点 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| `port` | `drempower_node` | string | `/dev/ttyACM0` | 串口设备路径 |
+| `baudrate` | `drempower_node` | int | `115200` | 串口波特率 |
+| `can_interface` | `drempower_sc_node` | string | `can0` | SocketCAN 接口名称 |
+| `motor_ids` | 通用 | int_array | `[1]` | 默认管理的电机 ID 列表 |
+| `update_rate` | 通用 | double | `20.0` | 电机状态发布频率 (Hz) |
+| `init_motor_settings`| 通用 | bool | `false` | **总开关**：启动时是否应用以下配置 |
+| `p_gain` / `i_gain` | 通用 | double | `-1.0` | 启动时设置 PID 增益 |
+| `speed_limit` | 通用 | double | `-1.0` | 启动时设置最大转速限制 (rad/s) |
+| `min_angle` / `max_angle` | 通用 | double | `-M_PI` / `M_PI` | 启动时设置角度限位 (rad) |
+| `set_angle_range` | 通用 | bool | `false` | 启动时是否开启角度限位 |
 
 ---
 
@@ -97,8 +103,16 @@ source install/setup.bash
 ## 📖 使用示例
 
 ### 1. 快速启动
+
+**使用串口驱动：**
 ```bash
 ros2 launch drempower_sdk drempower_launch.py
+```
+
+**使用 SocketCAN 驱动：**
+如果你想单独运行 SocketCAN 节点（假设你的 CAN 接口为 `can0`）：
+```bash
+ros2 run drempower_sdk drempower_sc_node --ros-args -p can_interface:="can0" -p motor_ids:="[1, 2]"
 ```
 
 ### 2. 命令行控制 (同步控制 ID 1 和 2 到 1.57 rad [90°])
